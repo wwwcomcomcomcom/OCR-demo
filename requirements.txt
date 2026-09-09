@@ -1,0 +1,13 @@
+# python3 -m pip install -r requirements.txt
+# 버전은 이 프로젝트가 실제로 돌아간 조합. 올려도 되면 == 를 >= 로 바꿔 쓰면 된다.
+
+# ocr.py: PDF 렌더링 + 헤더/푸터 마스킹
+PyMuPDF==1.26.5
+pillow==10.4.0
+
+# ocr.py: Unlimited-OCR 실행. Apple Silicon(MLX) 전용이므로
+# 다른 플랫폼에서는 설치가 실패한다. 추출 단계만 쓸 경우 이 줄을 빼도 된다.
+mlx-vlm==0.1.15
+
+# extract.py: OpenAI 호환 API 클라이언트 (자체 호스팅 서버 포함)
+openai==2.48.0

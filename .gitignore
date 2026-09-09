@@ -1,0 +1,27 @@
+# 입력 문서와 산출물 (코드 아님)
+*.pdf
+*.png
+*.jpg
+*.jpeg
+document_ocr.txt
+*_ocr.txt
+document_extracted.json
+*_extracted.json
+document_reconstructed.html
+*_reconstructed.html
+*.partial
+
+# 로컬 설정 (키 포함) — 예시 파일만 커밋
+.env
+.env.local
+!.env.example
+
+# 로그
+*.log
+
+# 파이썬 / macOS
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
