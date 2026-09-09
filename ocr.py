@@ -25,6 +25,7 @@ import contextlib
 import io
 import json
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -296,6 +297,32 @@ def run_completion(
     return text
 
 
+def serve_forever(args) -> None:
+    """Start llama-server, report readiness, and stay up until terminated.
+
+    Loading the 5.9GB GGUF takes long enough that a batch of documents should
+    not pay for it once per document. `--serve` keeps one loaded server that
+    other `ocr.py` runs share through `--server-url`.
+    """
+    # Without this, a SIGTERM (which is how server.py stops a worker) kills this
+    # process outright and leaves llama-server behind holding the GPU. Exiting
+    # from the handler instead runs the atexit/finally cleanup below.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+
+    proc = start_llama_server(args)
+    base_url = f"http://{args.host}:{args.port}"
+    print("[waiting for llama-server to load the model]", file=sys.stderr)
+    wait_for_server(base_url, proc, args.server_timeout)
+    print(f"[llama-server ready at {base_url}]", file=sys.stderr, flush=True)
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        with contextlib.suppress(Exception):
+            stop_llama_server(proc)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -346,7 +373,17 @@ def main():
     server_group.add_argument(
         "--server-timeout", type=float, default=180, help="서버 기동/모델 로딩 대기 시간(초)"
     )
+    server_group.add_argument(
+        "--serve",
+        action="store_true",
+        help="PDF를 읽지 않고 llama-server만 띄운 채 대기한다. 여러 번의 OCR 실행이 "
+        "--server-url 로 이 서버를 공유하면 모델을 한 번만 올린다 (server.py가 이렇게 쓴다).",
+    )
     args = parser.parse_args()
+
+    if args.serve:
+        serve_forever(args)
+        return
 
     proc = None
     if args.server_url:
