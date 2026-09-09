@@ -69,7 +69,8 @@ LLM_API_KEY = setting("LLM_API_KEY") or setting("OPENAI_API_KEY", "not-needed")
 # 서버에 로드된 모델 이름 (vLLM은 보통 HF 리포지토리 경로 그대로).
 LLM_MODEL = setting("LLM_MODEL", "gpt-4.1")
 
-# 응답 최대 토큰 수. 서술형 원문을 그대로 옮기므로 넉넉해야 한다.
+# 응답 최대 토큰 수. 서술형은 스키마에서 빠졌으므로 예전만큼 클 필요는 없지만,
+# 상한일 뿐이라 넉넉히 둬도 손해는 없다(초과하면 extract.py가 오류로 멈춘다).
 LLM_MAX_OUTPUT_TOKENS = int(setting("LLM_MAX_OUTPUT_TOKENS", "32768"))
 
 # 구조화 출력 방식.
