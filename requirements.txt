@@ -10,3 +10,8 @@ pillow==10.4.0
 # CUDA로 빌드해 둔 바이너리를 쓴다.
 
 # extract.py: 표준 라이브러리만 쓴다(표 서식 기반 파서). 추가 의존성 없음.
+
+# server.py: 업로드 데모 웹 서버. CLI만 쓸 거면 이 셋은 없어도 된다.
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32

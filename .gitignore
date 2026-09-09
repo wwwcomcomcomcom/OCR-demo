@@ -19,6 +19,12 @@ document_reconstructed.html
 # 로그
 *.log
 
+# server.py가 업로드마다 만드는 uuid 작업 디렉터리
+runs/
+
+# run.sh 가 남기는 것
+.server.pid
+
 # 파이썬 / macOS
 __pycache__/
 *.py[cod]

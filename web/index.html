@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>생활기록부 파싱 데모</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <h1>생활기록부 파싱 데모</h1>
+        <p>학교생활세부사항기록부 PDF를 OCR로 읽고 표를 JSON으로 뽑습니다.</p>
+      </div>
+      <div id="status-pill" class="pill">연결 중…</div>
+    </header>
+
+    <main class="layout">
+      <section class="col-left">
+        <form id="dropzone" class="dropzone">
+          <input id="file-input" type="file" accept="application/pdf" multiple hidden />
+          <div class="dz-icon">＋</div>
+          <div class="dz-title">PDF를 끌어다 놓거나 클릭해서 선택</div>
+          <div class="dz-sub">여러 개를 한 번에 올리면 GPU 수만큼 동시에 처리합니다</div>
+        </form>
+        <div id="upload-error" class="error-box" hidden></div>
+
+        <div class="list-head">
+          <h2>작업 목록</h2>
+          <button id="clear-done" class="link-btn" type="button">완료된 항목 정리</button>
+        </div>
+        <ul id="job-list" class="job-list"></ul>
+        <p id="job-empty" class="empty">아직 올린 문서가 없습니다.</p>
+      </section>
+
+      <section id="detail" class="col-right">
+        <div class="placeholder">
+          <p>왼쪽에서 문서를 선택하면 파싱 결과가 여기에 표시됩니다.</p>
+        </div>
+      </section>
+    </main>
+
+    <!-- config.js는 서버가 실제 API 포트로 만들어 준다 (파일이 아니다). -->
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
