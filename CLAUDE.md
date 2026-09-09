@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 한국 중학교 학교생활세부사항기록부 PDF를 OCR로 읽고(`ocr.py`), 그 표를 미리 선언해 둔
 표 서식에 맞춰 JSON으로 뽑는(`extract.py`) 파이프라인. 추출 단계는 LLM을 쓰지 않는
 규칙 기반 파서다(17페이지 0.2초). `reconstruct.py`는 OCR 좌표로 원본 레이아웃을
-재현한 HTML/PDF를 만드는 검수용 도구.
+재현한 HTML/PDF를 만드는 검수용 도구. `server.py` + `web/`는 PDF를 업로드하면 이
+파이프라인을 돌려 결과를 보여주는 데모 웹사이트다.
 
 ## 실행
 
@@ -14,6 +15,8 @@ python3 pipeline.py document.pdf        # OCR -> 추출 전체
 python3 pipeline.py --skip-ocr          # 기존 document_ocr.txt 재사용 (개발 중 기본)
 python3 ocr.py document.pdf > document_ocr.txt   # OCR 단독 실행 시 리다이렉트 필수
 python3 extract.py --verbose            # 어떤 표를 어느 서식으로 읽었는지 표별로 출력
+./run.sh                                # 데모 웹서버 백그라운드 실행 (5173/8081)
+./stop.sh                               # 그 서버와 llama-server까지 종료
 ```
 
 - `ocr.py`는 결과를 파일에 쓰지 않는다. **OCR 텍스트는 stdout, 진행 로그는 stderr**로
@@ -49,6 +52,46 @@ python3 extract.py --verbose            # 어떤 표를 어느 서식으로 읽�
   있지 않으므로 CUDA(`-DGGML_CUDA=ON`)로 따로 빌드해 둬야 한다.
 - 입력 문서와 산출물(`*.pdf`, `*.png`, `*_ocr.txt`, `*_extracted.json`, 재현 HTML,
   `*.log`)은 `.gitignore`로 제외되어 있다. 커밋 대상은 코드와 설정뿐이다.
+
+## 데모 웹서버 (`server.py` + `web/`, `run.sh`/`stop.sh`)
+
+- 포트 둘, 프로세스 하나다. `--port 8081`은 FastAPI(JSON API), `--client-port 5173`은
+  `web/`을 내보내는 표준 라이브러리 정적 서버(스레드)다. 화면이 API 포트를 아는 방법은
+  서버가 만들어 주는 `config.js`(`window.API_PORT`) 하나뿐이니, 포트를 옮길 때 JS에
+  주소를 박아 넣지 말 것. 호스트는 페이지를 연 주소를 그대로 쓴다(IP·터널에서도 동작).
+- 이 전제는 브라우저가 접속한 포트와 서버가 바인딩한 포트가 같을 때만 성립한다.
+  포트포워딩/NAT로 외부 포트가 내부와 다르면(`run.sh` 기본값: 내부 8080/5173 ->
+  공인 34762/35915) `config.js`가 내부 포트를 그대로 알려줘 버려서 브라우저가 열리지
+  않는 포트로 API를 부르게 된다. `--public-port`(= `run.sh`의 `PUBLIC_PORT`)로 밖에서
+  보이는 API 포트를 따로 알려줘야 한다.
+- API 포트로도 같은 화면이 열린다(StaticFiles를 `/`에 마지막으로 mount). 포트 하나만
+  열 수 있는 환경을 위한 것이므로 `/api/...` 경로와 겹치는 라우트를 뒤에 추가하지 말 것.
+- `run.sh`는 `setsid`로 세션을 분리해 띄우고 `--pid-file`에 PID를 남긴다. `stop.sh`는
+  그 PID의 **프로세스 그룹째** 종료해 `ocr.py --serve`와 llama-server까지 정리한다.
+  그래서 `run.sh`에서 `setsid`를 빼면 stop.sh가 GPU를 반납하지 못한다.
+- `ocr.py --serve`는 SIGTERM을 받으면 `sys.exit`로 빠져나가 llama-server를 정리한다.
+  이 핸들러가 없으면 서버를 내려도 llama-server가 GPU를 11.5GB씩 물고 남는다.
+- 파이프라인을 다시 구현하지 않는다. `pipeline.py`와 마찬가지로 작업마다 `ocr.py`와
+  `extract.py`를 **서브프로세스로** 부른다. 파싱 규칙을 고칠 일이 생기면 `extract.py`만
+  고치면 웹에도 그대로 반영된다. 서버 쪽에 표 해석 로직을 두지 말 것.
+- 업로드 1건 = uuid4 작업 1개 = `--work-dir`(기본 `runs/`) 아래 디렉터리 1개
+  (`input.pdf`/`ocr.txt`/`extracted.json`). `document_ocr.txt` 같은 공용 파일명을 쓰지
+  않으므로 여러 문서를 동시에 처리해도 서로 덮어쓰지 않는다. 업로드된 파일명은 저장
+  경로에 절대 쓰지 않는다(표시용 이름표일 뿐 — 경로 조작 방지).
+- 동시성의 한계는 디스크가 아니라 GPU다. `--gpus` 번호 하나당 워커 스레드 하나가 공용
+  큐에서 작업을 꺼내며, 워커마다 자기 llama-server(`ocr.py --serve`, 첫 작업 때 기동)를
+  들고 있어 5.9GB 모델을 GPU당 한 번만 올린다. 워커를 GPU 수보다 늘리면 VRAM이 터진다.
+- `ocr.py --serve`는 이 서버를 위해 있는 모드다. llama-server만 띄우고 대기하며, 실제
+  OCR 실행은 `--server-url`로 그 서버에 붙는다. `--serve`를 지우면 문서마다 모델을
+  다시 로딩하게 된다.
+- 진행률은 `ocr.py`가 stderr에 찍는 `[N page(s)]` / `[OCR page i/N]` 줄을 정규식으로
+  읽어 만든다(`RE_PAGES`/`RE_PAGE`). 그 로그 문구를 바꾸면 진행 표시가 멈춘다.
+- 프런트엔드는 의존성 없는 순수 JS(`web/app.js`)이고 1.2초마다 `/api/jobs`를 폴링한다.
+  OCR 텍스트를 화면에 넣을 때는 `innerHTML` 대신 `textContent`(`h()` 헬퍼)를 쓴다.
+- 데모용이라 인증이 없고 작업 목록은 프로세스 메모리에만 있다. 재시작하면 목록은
+  사라지지만 `runs/`의 파일은 남는다(`--reset`으로 비운다).
+- GPU 없이 UI만 손볼 때는 `--no-ocr`. OCR 단계를 건너뛰고 `--ocr-text`(기본
+  `document_ocr.txt`)를 그 작업의 OCR 결과로 복사해 추출만 돌린다.
 
 ## 남아 있는 LLM 설정 파일
 
