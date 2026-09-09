@@ -5,9 +5,8 @@
 PyMuPDF==1.26.5
 pillow==10.4.0
 
-# ocr.py: Unlimited-OCR 실행. Apple Silicon(MLX) 전용이므로
-# 다른 플랫폼에서는 설치가 실패한다. 추출 단계만 쓸 경우 이 줄을 빼도 된다.
-mlx-vlm==0.1.15
+# ocr.py: Unlimited-OCR 실행은 표준 라이브러리(urllib)로 로컬 llama-server(CUDA)의
+# /completion에 직접 붙는다. llama-server 자체는 pip 패키지가 아니라 ~/llama.cpp를
+# CUDA로 빌드해 둔 바이너리를 쓴다.
 
-# extract.py: OpenAI 호환 API 클라이언트 (자체 호스팅 서버 포함)
-openai==2.48.0
+# extract.py: 표준 라이브러리만 쓴다(표 서식 기반 파서). 추가 의존성 없음.

@@ -3,14 +3,14 @@
 기존 스크립트를 그대로 서브프로세스로 실행하기만 한다(로직 중복 없음):
 
     1) ocr.py        : PDF 각 페이지를 Unlimited-OCR로 읽어 텍스트로 (stdout -> --ocr-text)
-    2) extract.py    : 그 텍스트를 LLM 서버에 넣어 JSON 스키마로 정리 (-> --output)
+    2) extract.py    : 그 텍스트의 표를 서식에 맞춰 JSON으로 정리 (-> --output)
     3) reconstruct.py: (선택) OCR 결과로 레이아웃 재현 HTML/PDF 생성
 
     python pipeline.py document.pdf
     python pipeline.py --skip-ocr            # 이미 만들어둔 OCR 텍스트 재사용
-    python pipeline.py --model Qwen/Qwen3-32B-AWQ --base-url http://192.168.0.10:8000/v1
+    python pipeline.py --skip-ocr --verbose  # 어떤 표를 어느 서식으로 읽었는지 확인
 
-LLM 서버 주소·API 키·모델 기본값은 config.py 에서 읽는다.
+추출 단계는 LLM을 쓰지 않으므로 서버 설정이 필요 없고 1초도 걸리지 않는다.
 """
 
 import argparse
@@ -67,12 +67,13 @@ def main():
     ocr_group.add_argument("--header-frac", type=float)
     ocr_group.add_argument("--footer-frac", type=float)
 
-    llm_group = parser.add_argument_group("extract.py 옵션 (지정한 것만 전달, 기본값은 config.py)")
-    llm_group.add_argument("--model")
-    llm_group.add_argument("--base-url")
-    llm_group.add_argument("--api-key")
-    llm_group.add_argument("--response-format", choices=["json_schema", "json_object", "none"])
-    llm_group.add_argument("--max-output-tokens", type=int)
+    extract_group = parser.add_argument_group("extract.py 옵션")
+    extract_group.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="어떤 표를 어느 서식으로 읽었는지 표별로 출력",
+    )
 
     args = parser.parse_args()
 
@@ -115,15 +116,8 @@ def main():
         "--output",
         args.output,
     ]
-    for flag, value in [
-        ("--model", args.model),
-        ("--base-url", args.base_url),
-        ("--api-key", args.api_key),
-        ("--response-format", args.response_format),
-        ("--max-output-tokens", args.max_output_tokens),
-    ]:
-        if value is not None:
-            cmd += [flag, str(value)]
+    if args.verbose:
+        cmd.append("--verbose")
     run("2/2 추출", cmd)
 
     # 3) (선택) 레이아웃 재현
