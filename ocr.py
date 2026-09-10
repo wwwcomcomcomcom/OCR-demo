@@ -8,6 +8,11 @@ Tokens containing Han characters are banned from the sampler by default (see
 `han_token_ids`), which is what keeps a Korean page from collapsing into
 Chinese mid-generation.
 
+Generation is streamed so that a page which starts repeating itself can be cut
+off as soon as the repetition is visible (see `repeating_tail`) and re-read at
+a temperature that can escape the loop, instead of spending the whole token
+budget on it.
+
 The model runs behind a local `llama-server` process (started and stopped by
 this script) so the GGUF weights are loaded once and reused across pages.
 Generation goes through llama.cpp's raw `/completion` endpoint rather than the
@@ -61,6 +66,19 @@ HAN_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF), (0x20000, 0x
 # Lead bytes of the UTF-8 encodings covering those ranges: a Han character could
 # otherwise still be spelled out one raw byte at a time.
 CJK_LEAD_BYTES = frozenset(range(0xE4, 0xEA))
+
+# A page that starts repeating itself never recovers: at temperature 0 the
+# context that produced the loop reproduces it token for token, so the page
+# spends the entire --max-tokens budget on it. In the sample document that was
+# pages 7, 9 and 12 at 8,192 tokens each - two thirds of the whole document's
+# decoding time, and page 12 lost the grade rows the loop crowded out.
+# Generating as a stream is what makes the loop visible in time to cut it off.
+LOOP_WINDOW = 2400  # chars of the tail examined for a repeating block
+LOOP_MAX_PERIOD = 400  # longest repeating unit to look for
+LOOP_MIN_SPAN = 800  # shorter runs stay: a blank form section repeats rows too
+LOOP_MIN_REPEATS = 3
+LOOP_CHECK_EVERY = 50  # tokens between checks
+LOOP_RETRY_TEMPERATURE = 0.3  # enough randomness to not fall into the same loop
 
 
 class _Reader:
@@ -257,6 +275,26 @@ def fetch_props(base_url: str) -> dict:
         return json.loads(resp.read())
 
 
+def repeating_tail(text: str) -> tuple[int, int] | None:
+    """Find a block at the end of `text` that has become its own continuation.
+
+    Returns the (start, period) of the repeated run, or None. A run has to be
+    both long and repetitive enough to tell it apart from the genuinely
+    identical (often blank) rows a form section can contain.
+    """
+    tail = text[-LOOP_WINDOW:]
+    n = len(tail)
+    for period in range(1, min(LOOP_MAX_PERIOD, n // LOOP_MIN_REPEATS) + 1):
+        block = tail[n - period :]
+        start = n - period
+        while start >= period and tail[start - period : start] == block:
+            start -= period
+        span = n - start
+        if span // period >= LOOP_MIN_REPEATS and span >= LOOP_MIN_SPAN:
+            return len(text) - span, period
+    return None
+
+
 def run_completion(
     base_url: str,
     marker: str,
@@ -266,7 +304,8 @@ def run_completion(
     max_tokens: int,
     temperature: float,
     logit_bias: list,
-) -> str:
+) -> tuple[str, bool]:
+    """Read one page image, returning its text and whether a loop cut it short."""
     payload = {
         "prompt": {
             "prompt_string": marker + prompt,
@@ -274,6 +313,7 @@ def run_completion(
         },
         "n_predict": max_tokens,
         "temperature": temperature,
+        "stream": True,
     }
     if logit_bias:
         # llama-server bans a token outright when its bias is false.
@@ -283,18 +323,41 @@ def run_completion(
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
     )
+    parts, loop, tokens = [], None, 0
     try:
         with urllib.request.urlopen(req, timeout=600) as resp:
-            body = json.loads(resp.read())
+            for line in resp:
+                if not line.startswith(b"data: "):
+                    continue
+                chunk = json.loads(line[6:])
+                parts.append(chunk["content"])
+                tokens += 1
+                if chunk.get("stop"):
+                    break
+                if tokens % LOOP_CHECK_EVERY == 0:
+                    loop = repeating_tail("".join(parts))
+                    if loop:
+                        # Leaving the response unread drops the connection,
+                        # which is how llama-server hears to stop generating.
+                        break
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")
         sys.exit(f"error: llama-server 요청 실패 ({e.code}): {detail}")
-    text = body["content"]
+    text = "".join(parts)
+    if loop:
+        start, period = loop
+        # Keep one copy of the block: the first pass through it is usually real.
+        text = text[: start + period]
+        print(
+            f"  [반복 감지: {tokens}토큰에서 생성 중단 "
+            f"(같은 {period}자 블록 반복), 최대 {max_tokens}토큰 중 절약]",
+            file=sys.stderr,
+        )
     # --special (needed so <|det|>/<|ref|>/... render as text) also renders
     # the EOS token itself when generation stops naturally; strip it back off.
     if eos_token and text.endswith(eos_token):
         text = text[: -len(eos_token)]
-    return text
+    return text, loop is not None
 
 
 def serve_forever(args) -> None:
@@ -415,16 +478,36 @@ def main():
     try:
         for i, page_image in enumerate(pages, start=1):
             print(f"[OCR page {i}/{len(pages)}]", file=sys.stderr)
-            text = run_completion(
+            image_b64 = image_to_base64_png(page_image)
+            text, looped = run_completion(
                 base_url,
                 marker,
                 eos_token,
                 args.prompt,
-                image_to_base64_png(page_image),
+                image_b64,
                 args.max_tokens,
                 args.temperature,
                 logit_bias,
             )
+            if looped:
+                # The loop is deterministic, so re-reading the page is only
+                # worth it with a temperature that can leave the cycle.
+                print(
+                    f"  [temperature {LOOP_RETRY_TEMPERATURE}로 이 페이지만 다시 읽음]",
+                    file=sys.stderr,
+                )
+                retry, retry_looped = run_completion(
+                    base_url,
+                    marker,
+                    eos_token,
+                    args.prompt,
+                    image_b64,
+                    args.max_tokens,
+                    LOOP_RETRY_TEMPERATURE,
+                    logit_bias,
+                )
+                if not retry_looped or len(retry) > len(text):
+                    text = retry
             if len(pages) > 1:
                 print(f"\n\n===== Page {i} =====\n")
             print(text)
