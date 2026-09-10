@@ -227,6 +227,12 @@ def start_llama_server(args) -> subprocess.Popen:
         "-ngl", args.n_gpu_layers,
         "-c", str(args.ctx_size),
         "-fa", args.flash_attn,
+        # One page is read at a time, so one slot is all that is ever used.
+        # Left on auto the server opens four and then rotates through them by
+        # LRU, saving and restoring each idle slot's KV cache through host
+        # memory between pages - 83s of that per page against 4.5s of actual
+        # generation on the resident server the demo keeps up.
+        "-np", "1",
         "--chat-template", "deepseek-ocr",
         "--no-jinja",
         "--special",
